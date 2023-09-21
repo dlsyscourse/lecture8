@@ -1,74 +1,17 @@
-"""Operator and gradient implementations."""
+"""Operator implementations."""
+
 from numbers import Number
-from typing import Optional, List
-from .autograd import NDArray
-from .autograd import Op, Tensor, Value, TensorOp
+from typing import Optional, List, Tuple, Union
 
-from .autograd import TensorTuple, TensorTupleOp
-
+from ..autograd import NDArray
+from ..autograd import Op, Tensor, Value, TensorOp
+from ..autograd import TensorTuple, TensorTupleOp
 import numpy
 
-# NOTE: we will numpy as the array_api
-# to backup our computations, this line will change in later homeworks
+# NOTE: we will import numpy as the array_api
+# as the backend for our computations, this line will change in later homeworks
+
 import numpy as array_api
-
-
-class MakeTensorTuple(TensorTupleOp):
-    def compute(self, *args) -> tuple:
-        return tuple(args)
-
-    def gradient(self, out_grad, node):
-        assert isinstance(out_grad, TensorTuple)
-        return tuple(*[out_grad[i] for i in range(len(out_grad))])
-
-
-def make_tuple(*args):
-    return MakeTensorTuple()(*args)
-
-
-class TupleGetItem(TensorOp):
-    def __init__(self, index):
-        self.index = index
-
-    def __call__(self, a: TensorTuple, fold_const=True) -> Value:
-        assert isinstance(a, TensorTuple)
-        # constant folding
-        if fold_const and isinstance(a.op, MakeTensorTuple):
-            return a.inputs[self.index]
-        return Tensor.make_from_op(self, [a])
-
-    def compute(self, a):
-        return a[self.index]
-
-    def gradient(self, out_grad, node):
-        index = self.index
-        in_grad = []
-        for i, value in enumerate(node.inputs[0]):
-            if i != index:
-                in_grad.append(zeros_like(value))
-            else:
-                in_grad.append(out_grad)
-        return MakeTensorTuple()(*in_grad)
-
-
-def tuple_get_item(value, index):
-    return TupleGetItem(index)(value)
-
-
-class FusedAddScalars(TensorTupleOp):
-    def __init__(self, c0: float, c1: float):
-        self.c0 = c0
-        self.c1 = c1
-
-    def compute(self, a):
-        return a + self.c0, a + self.c1
-
-    def gradient(self, out_grad, node):
-        return out_grad[0] + out_grad[1]
-
-
-def fused_add_scalars(x, c0, c1):
-    return FusedAddScalars(c0, c1)(x)
 
 
 class EWiseAdd(TensorOp):
@@ -145,6 +88,27 @@ class PowerScalar(TensorOp):
 
 def power_scalar(a, scalar):
     return PowerScalar(scalar)(a)
+
+
+class EWisePow(TensorOp):
+    """Op to element-wise raise a tensor to a power."""
+
+    def compute(self, a: NDArray, b: NDArray) -> NDArray:
+        return a**b
+
+    def gradient(self, out_grad, node):
+        if not isinstance(node.inputs[0], NDArray) or not isinstance(
+            node.inputs[1], NDArray
+        ):
+            raise ValueError("Both inputs must be tensors (NDArray).")
+
+        a, b = node.inputs[0], node.inputs[1]
+        grad_a = out_grad * b * (a ** (b - 1))
+        grad_b = out_grad * (a**b) * array_api.log(a.data)
+        return grad_a, grad_b
+
+def power(a, b):
+    return EWisePow()(a, b)
 
 
 class EWiseDiv(TensorOp):
@@ -227,7 +191,9 @@ class BroadcastTo(TensorOp):
         self.shape = shape
 
     def compute(self, a):
-        return array_api.broadcast_to(a, self.shape)
+        ### BEGIN YOUR SOLUTION
+        raise NotImplementedError()
+        ### END YOUR SOLUTION
 
     def gradient(self, out_grad, node):
         ### BEGIN YOUR SOLUTION
@@ -308,7 +274,9 @@ def log(a):
 
 class Exp(TensorOp):
     def compute(self, a):
-        return array_api.exp(a)
+        ### BEGIN YOUR SOLUTION
+        raise NotImplementedError()
+        ### END YOUR SOLUTION
 
     def gradient(self, out_grad, node):
         ### BEGIN YOUR SOLUTION
@@ -320,7 +288,6 @@ def exp(a):
     return Exp()(a)
 
 
-# TODO
 class ReLU(TensorOp):
     def compute(self, a):
         ### BEGIN YOUR SOLUTION
@@ -335,99 +302,3 @@ class ReLU(TensorOp):
 
 def relu(a):
     return ReLU()(a)
-
-
-class LogSoftmax(TensorOp):
-    def compute(self, Z):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
-    def gradient(self, out_grad, node):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
-
-def logsoftmax(a):
-    return LogSoftmax()(a)
-
-
-# additional helper functions
-def full(
-    shape, fill_value, *, rand={}, dtype="float32", device=None, requires_grad=False
-):
-    # numpy do not need device argument
-    kwargs = {"device": device} if array_api is not numpy else {}
-    device = device if device else cpu()
-
-    if not rand or "dist" not in rand:
-        arr = array_api.full(shape, fill_value, dtype=dtype, **kwargs)
-    else:
-        if rand["dist"] == "normal":
-            arr = array_api.randn(
-                shape, dtype, mean=rand["mean"], std=rand["std"], **kwargs
-            )
-        if rand["dist"] == "binomial":
-            arr = array_api.randb(
-                shape, dtype, ntrials=rand["trials"], p=rand["prob"], **kwargs
-            )
-        if rand["dist"] == "uniform":
-            arr = array_api.randu(
-                shape, dtype, low=rand["low"], high=rand["high"], **kwargs
-            )
-
-    return Tensor.make_const(arr, requires_grad=requires_grad)
-
-
-def zeros(shape, *, dtype="float32", device=None, requires_grad=False):
-    return full(shape, 0, dtype=dtype, device=device, requires_grad=requires_grad)
-
-
-def randn(
-    shape, *, mean=0.0, std=1.0, dtype="float32", device=None, requires_grad=False
-):
-    return full(
-        shape,
-        0,
-        rand={"dist": "normal", "mean": mean, "std": std},
-        dtype=dtype,
-        device=device,
-        requires_grad=requires_grad,
-    )
-
-
-def randb(shape, *, n=1, p=0.5, dtype="float32", device=None, requires_grad=False):
-    return full(
-        shape,
-        0,
-        rand={"dist": "binomial", "trials": n, "prob": p},
-        dtype=dtype,
-        device=device,
-        requires_grad=requires_grad,
-    )
-
-
-def randu(shape, *, low=0, high=1, dtype="float32", device=None, requires_grad=False):
-    return full(
-        shape,
-        0,
-        rand={"dist": "uniform", "low": low, "high": high},
-        dtype=dtype,
-        device=device,
-        requires_grad=requires_grad,
-    )
-
-
-def zeros_like(array, *, device=None, requires_grad=False):
-    device = device if device else array.device
-    return full(
-        array.shape, 0, dtype=array.dtype, device=device, requires_grad=requires_grad
-    )
-
-
-def ones_like(array, *, device=None, requires_grad=False):
-    device = device if device else array.device
-    return full(
-        array.shape, 1, dtype=array.dtype, device=device, requires_grad=requires_grad
-    )
